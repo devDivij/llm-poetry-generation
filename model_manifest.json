@@ -7,7 +7,8 @@
       "validation_loss": 0.3337705731391907,
       "base_model": "unsloth/phi-4-unsloth-bnb-4bit",
       "path": "models/phi4-payar-0shot",
-      "weight_bytes": 524363632
+      "weight_bytes": 524363632,
+      "repo_id": "eigensmith/phi4-lora-bengali-poetry-0shot"
     },
     "phi4-payar-1shot": {
       "setting": "1S",
@@ -15,12 +16,14 @@
       "validation_loss": 0.32930079102516174,
       "base_model": "unsloth/phi-4-unsloth-bnb-4bit",
       "path": "models/phi4-payar-1shot",
-      "weight_bytes": 524363632
+      "weight_bytes": 524363632,
+      "repo_id": "eigensmith/phi4-lora-bengali-poetry-1shot"
     },
     "bge-m3-bengali-20k": {
       "path": "models/bge-m3-bengali-20k",
       "training_examples": 20000,
-      "weight_bytes": 2271064456
+      "weight_bytes": 2271064456,
+      "repo_id": "eigensmith/bge-m3-bengali-finetuned"
     }
   }
 }

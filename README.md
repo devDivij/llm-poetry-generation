@@ -1,34 +1,105 @@
-# Bengali Payar pipeline
+# Bengali Payar: generation and evaluation
 
-One interface generates a Bengali couplet from an English meaning and returns
-meter/rhyme/diction diagnostics plus English–Bengali cosine similarity.
-The semantic and syntactic implementations are copied from the existing tested
-modules. Training, CSV processing, batch jobs, and optimizer states are excluded.
+Generate a two-line Bengali Payar couplet from an English meaning, then evaluate
+its poetic structure and semantic similarity to that meaning. This package
+combines a fine-tuned Phi-4 generator, a rule-based Payar analyzer, and a
+fine-tuned BGE-M3 embedding model behind one Python interface.
 
-## Use
+```text
+English meaning → Phi-4 + LoRA adapter → Bengali couplet
+                                              │
+                          ┌───────────────────┴─────────────────┐
+                          ▼                                     ▼
+                 Meter, rhyme, diction              English–Bengali similarity
+                          └───────────────────┬─────────────────┘
+                                              ▼
+                                Couplet + both check results
+```
 
-Install the code into your existing inference environment:
+## How it works
+
+1. **Generate:** format the English meaning with the saved system prompt and
+   Phi-4 chat template, then generate a Bengali response using a LoRA adapter.
+2. **Check structure:** analyze the two lines for estimated mātrā counts, pause
+   boundaries, rhyme, readability, and recognized colloquial diction.
+3. **Compare meaning:** embed the English meaning and complete Bengali couplet
+   with the fine-tuned BGE-M3 model and calculate their cosine similarity.
+
+The pipeline returns these results together. It does not automatically rewrite
+failed outputs or combine the checks into a single acceptance score.
+
+## Models
+
+| Model | Role | Local directory used below |
+|---|---|---|
+| [eigensmith/phi4-lora-bengali-poetry-0shot](https://huggingface.co/eigensmith/phi4-lora-bengali-poetry-0shot) | Phi-4 LoRA adapter; instructions without a worked example | `models/phi4-payar-0shot` |
+| [eigensmith/phi4-lora-bengali-poetry-1shot](https://huggingface.co/eigensmith/phi4-lora-bengali-poetry-1shot) | Phi-4 LoRA adapter; instructions with one worked example | `models/phi4-payar-1shot` |
+| [eigensmith/bge-m3-bengali-finetuned](https://huggingface.co/eigensmith/bge-m3-bengali-finetuned) | Full BGE-M3 embedding checkpoint, fine-tuned on 20k English–Bengali examples | `models/bge-m3-bengali-20k` |
+
+**0-shot and 1-shot describe the prompt format.** Both generators are fine-tuned
+models. The 1-shot prompt includes a worked example; the 0-shot prompt does not.
+Use the matching adapter and `setting` when loading the pipeline. The exact
+prompts are included in `payar/prompts.json`.
+
+The Phi-4 repositories contain **LoRA adapters**, not complete base models.
+Unsloth reads `adapter_config.json`, loads
+[`unsloth/phi-4-unsloth-bnb-4bit`](https://huggingface.co/unsloth/phi-4-unsloth-bnb-4bit),
+and attaches the adapter. Base weights may be downloaded into the Hugging Face
+cache on first use. Fully offline inference also requires those base weights.
+The BGE-M3 folder contains the full embedder, tokenizer, pooling, and normalization
+configuration.
+
+## Installation
+
+Use Python 3.10 or later in a virtual environment with CUDA-compatible PyTorch
+and an NVIDIA GPU supported by Unsloth. From the directory containing
+`pyproject.toml`, install the package and model dependencies:
 
 ```bash
-cd payar_pipeline
+python3 -m pip install -e ".[generation,semantic]"
+```
+
+If the model dependencies are already installed in a compatible environment,
+install only the package:
+
+```bash
 python3 -m pip install --no-deps -e .
 ```
 
-Generation requires CUDA, PyTorch, Unsloth, Transformers, and their dependencies.
-The saved training logs used Unsloth/Zoo 2026.11.4, Torch 2.14.1+cu130, and
-Transformers 5.17.0. The embedding checkpoint was saved with SentenceTransformers
-6.2.0, Torch 2.15.0+cu132, and Transformers 5.22.1. These describe two original
-environments; they are not a validated combined dependency lock.
+Importing `payar` does not load models or initialize CUDA. Call
+`PayarPipeline.from_pretrained()` before importing Transformers or
+SentenceTransformers elsewhere in the process, so Unsloth can apply its patches
+first. See the validation section for dependency compatibility limits.
 
-Optional extras declare the direct dependencies (`.[semantic]`, `.[generation]`).
-Do not upgrade a working server environment just to install the code. A combined
-GPU inference run still needs validation in a compatible environment.
+## Download the models
 
-Run from this directory, or use absolute model paths:
+Run from the package directory. Download one generator adapter and the embedder;
+both adapters are needed only to use both prompt settings.
+
+```bash
+hf download eigensmith/phi4-lora-bengali-poetry-0shot --local-dir models/phi4-payar-0shot
+hf download eigensmith/bge-m3-bengali-finetuned --local-dir models/bge-m3-bengali-20k
+```
+
+For the 1-shot generator:
+
+```bash
+hf download eigensmith/phi4-lora-bengali-poetry-1shot --local-dir models/phi4-payar-1shot
+```
+
+The `hf` command is supplied by `huggingface_hub`. If a repository is private,
+authenticate first with `hf auth login` using an account with access. For
+reproducible deployments, add `--revision MODEL_COMMIT_SHA` to each download.
+Keep downloaded filenames and subdirectories unchanged. Local directory names
+are independent of the Hugging Face repository names; the examples above match
+`model_manifest.json`.
+
+## Generate and evaluate
 
 ```python
 from payar import PayarPipeline
 
+# Load once and reuse for successive meanings.
 pipeline = PayarPipeline.from_pretrained(
     adapter_path="models/phi4-payar-0shot",
     embedding_path="models/bge-m3-bengali-20k",
@@ -41,99 +112,91 @@ print(result["syntactic"])
 print(result["semantic"])
 ```
 
-Load once and reuse `pipeline.generate()` for successive inputs. For 1S, use
-`models/phi4-payar-1shot` and `setting="1S"`. The exact system prompts are stored
-in `payar/prompts.json`; the user message and Phi-4 chat template match training.
-Load this pipeline before importing Transformers/SentenceTransformers elsewhere,
-so Unsloth can apply its patches first. The embedder defaults to CPU to leave GPU
-memory for Phi-4; set `semantic_device="cuda"` if sufficient memory is available.
+For 1-shot generation, use `models/phi4-payar-1shot` and `setting="1S"`.
+Phi-4 loads on the visible CUDA GPU. The embedder defaults to CPU to leave GPU
+memory for generation; set `semantic_device="cuda"` if enough memory is available.
+Paths are relative to the current working directory; absolute paths can be used
+from another application.
 
-To check an existing couplet with the same loaded pipeline:
+Generation uses greedy decoding with a default budget of 300 new tokens and a
+total context budget of 1536 tokens. Set `max_new_tokens=` on `generate()` to
+change the output budget. Inputs exceeding the context budget raise an error
+rather than being silently truncated.
 
-```python
-result = pipeline.evaluate(english, (first_bengali_line, second_bengali_line))
-```
+## Evaluate an existing couplet
 
-Couplets accept a tuple of two lines or text separated by newlines/Bengali dandas.
-A `|` marks a pause within a line, not the boundary between two lines.
-Wrong line counts return a failed syntactic check with an error message; empty
-generated text has `semantic=None`. Overlong inputs raise errors rather than
-silently truncating. Generation uses greedy decoding with a default budget of
-300 new tokens and a total context budget of 1536.
-
-Cosine similarity is not a probability. `semantic_match` remains `None` unless
-you explicitly supply `threshold=` at loading. A calibrated cutoff, combined
-acceptance decision, and automatic regeneration are not implemented. Meter and
-diction checks are pronunciation/spelling heuristics, not a general grammar
-parser. Passing them does not prove semantic correctness.
-
-You can also import `SemanticClassifier` or `analyze_couplet` directly from
-`payar`, without loading Phi-4. Importing the package itself loads no ML libraries.
-
-## Models
-
-| Local folder | Contents | Selection |
-|---|---|---|
-| `models/bge-m3-bengali-20k` | Full fine-tuned embedder, tokenizer, pooling and normalization configs | Existing 20k-example model |
-| `models/phi4-payar-0shot` | LoRA adapter and tokenizer | Checkpoint 250, validation loss 0.333771 |
-| `models/phi4-payar-1shot` | LoRA adapter and tokenizer | Checkpoint 200, validation loss 0.329301 |
-
-Adapter selection follows the lowest recorded validation loss within each run.
-It does not establish which model produces better poems. Provenance is recorded
-in `model_manifest.json` and each adapter's `selection.json`.
-
-The adapters need base model `unsloth/phi-4-unsloth-bnb-4bit`; base weights are not
-bundled and may be downloaded into the Hugging Face cache on first use. The
-embedding checkpoint is loaded locally. This is not a fully offline Phi-4 bundle.
-
-Local model files use hard links to the originals to avoid duplicating about
-3.3 GB on this nearly full filesystem. They behave as regular files for loading,
-copying, and uploading. Treat their contents as immutable: editing a linked file
-in place also changes the original. No original files were moved or removed.
-
-## GitHub and Hugging Face
-
-Commit this directory's code, prompts, documentation, tests, and manifest to
-GitHub. `models/` is excluded by `.gitignore`. No repositories have been created
-and no files have been uploaded.
-
-Upload each model folder to its own Hugging Face model repository, for example:
-
-```text
-YOUR_ACCOUNT/bge-m3-bengali-20k
-YOUR_ACCOUNT/phi4-payar-0shot
-YOUR_ACCOUNT/phi4-payar-1shot
-```
-
-Change repository/folder names, not loader filenames such as `model.safetensors`,
-`adapter_model.safetensors`, `modules.json`, or the pooling module directories.
-Keep each folder's tokenizer and configuration files with its weights. The
-adapter repositories also need the matching prompt; include the code repository
-link and `payar/prompts.json` when preparing their final model cards.
-
-After uploading, another machine can restore each folder with:
+Use the same loaded pipeline without generating a new couplet:
 
 ```python
-from huggingface_hub import snapshot_download
-
-snapshot_download(
-    repo_id="YOUR_ACCOUNT/bge-m3-bengali-20k",
-    revision="YOUR_MODEL_COMMIT_SHA",
-    local_dir="models/bge-m3-bengali-20k",
+english = "The devotee remains at the Lord's feet, with devotion in the heart."
+bengali = (
+    "প্রভুর চরণে সদা রহিল যে জন।",
+    "তাহার হৃদয়ে নিত্য প্রেমের সাধন॥",
 )
+result = pipeline.evaluate(english, bengali)
 ```
 
-Repeat for the two adapter repositories. Record the real repository IDs and
-commit SHAs in the manifest when published. Hugging Face references:
-[uploading models](https://huggingface.co/docs/hub/models-uploading),
-[downloading models](https://huggingface.co/docs/huggingface_hub/en/guides/download).
+Couplets accept a tuple of two lines or text separated by newlines or Bengali
+dandas. A `|` marks a pause **within** a line, not the boundary between two lines.
 
-## Verification
+For evaluation without loading a generator, use the components directly:
+
+```python
+from payar import SemanticClassifier, analyze_couplet
+
+semantic = SemanticClassifier.from_pretrained("models/bge-m3-bengali-20k")
+structure = analyze_couplet(bengali)
+meaning = semantic.classify(english, bengali)
+```
+
+Structural analysis alone uses the Python standard library and needs no weights.
+Semantic scoring requires the `semantic` dependencies and the embedder.
+
+## Understanding the results
+
+| Result field | Meaning |
+|---|---|
+| `english` | Supplied English meaning |
+| `bengali` | Generated or supplied Bengali text |
+| `syntactic` | Structural diagnostics: `payar`, `task_valid`, line analysis, rhyme, diction, and failures |
+| `semantic` | Cosine similarity, optional threshold decision, and token counts |
+
+The structural analyzer estimates 14 mātrā per line and checks word/pause
+boundaries after 8, 7, or 9 mātrā, in that preference order. It also checks rhyme
+and readability. `task_valid` additionally requires no recognized colloquial
+diction. These are spelling/pronunciation heuristics for the supported
+Sadhu/medieval convention, not a general Bengali grammar parser.
+
+`semantic["cosine_similarity"]` compares the complete English meaning with the
+complete Bengali couplet. It is **not a probability of correctness**.
+`semantic_match` is `None` by default. Supplying `threshold=` when loading the
+pipeline enables a comparison against that user-selected cutoff; the package
+does not provide a calibrated threshold.
+
+A wrong number of lines returns a failed structural check with an `error`
+message. Empty generated text has `semantic=None`. Passing structural checks
+does not prove that the meaning is correct, and a high similarity score does not
+prove that the couplet is valid Payar.
+
+## Checkpoint selection and validation
+
+`model_manifest.json` records checkpoint 250 for 0S (validation loss 0.333771) and
+checkpoint 200 for 1S (validation loss 0.329301). Selection follows the lowest
+recorded validation loss within each run; it does not establish which generator
+produces better poems.
+
+Run the interface tests with:
 
 ```bash
 python3 -B -m unittest discover -s tests -v
 ```
 
-These tests check the combined interface with simulated generation and encoding,
-real syntactic analysis and cosine calculation, and malformed/empty output cases.
-They do not validate real GPU inference or the joint ML dependency environment.
+The tests use simulated generation and encoding with real structural analysis
+and cosine calculation. They cover the combined interface and malformed/empty
+outputs; they do not establish end-to-end GPU inference compatibility.
+
+The original generation environment used Unsloth/Zoo 2026.11.4, Torch
+2.14.1+cu130, and Transformers 5.17.0. The embedder was saved with
+SentenceTransformers 6.2.0, Torch 2.15.0+cu132, and Transformers 5.22.1. These are
+provenance records from separate environments, not a validated combined
+dependency lock.
