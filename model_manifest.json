@@ -1,0 +1,26 @@
+{
+  "selection_rule": "Lowest recorded validation loss per training run; downstream generation quality not yet compared.",
+  "models": {
+    "phi4-payar-0shot": {
+      "setting": "0S",
+      "step": 250,
+      "validation_loss": 0.3337705731391907,
+      "base_model": "unsloth/phi-4-unsloth-bnb-4bit",
+      "path": "models/phi4-payar-0shot",
+      "weight_bytes": 524363632
+    },
+    "phi4-payar-1shot": {
+      "setting": "1S",
+      "step": 200,
+      "validation_loss": 0.32930079102516174,
+      "base_model": "unsloth/phi-4-unsloth-bnb-4bit",
+      "path": "models/phi4-payar-1shot",
+      "weight_bytes": 524363632
+    },
+    "bge-m3-bengali-20k": {
+      "path": "models/bge-m3-bengali-20k",
+      "training_examples": 20000,
+      "weight_bytes": 2271064456
+    }
+  }
+}

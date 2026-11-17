@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bengali-payar"
+version = "0.1.0"
+description = "Single-couplet Bengali Payar generation, meter analysis, and semantic scoring"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+semantic = ["sentence-transformers==6.2.0"]
+generation = ["unsloth==2026.11.4", "unsloth-zoo==2026.11.4"]
+
+[tool.setuptools.packages.find]
+include = ["payar"]
+
+[tool.setuptools.package-data]
+payar = ["prompts.json"]
